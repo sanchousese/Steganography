@@ -1,18 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.macroid.starter"
-    android:versionCode="0"
-    android:versionName="0.1">
+          package="com.example.macroid.starter"
+          android:versionCode="0"
+          android:versionName="0.1">
 
     <uses-sdk
-        android:minSdkVersion="9"
-        android:targetSdkVersion="21"/>
+            android:minSdkVersion="14"
+            android:targetSdkVersion="21"/>
+
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
 
     <application
-        android:label="Macroid Starter"
+        android:label="Steganography"
         android:icon="@drawable/android:star_big_on">
 
         <activity
-          android:label="Macroid Starter"
+          android:label="Steganography"
           android:name=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

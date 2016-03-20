@@ -1,13 +1,25 @@
 package com.example.macroid.starter
 
+import java.io._
+import java.nio.ByteBuffer
+
+import android.content.{ContentValues, Intent}
+import android.net.Uri
+import android.provider.MediaStore
+import android.provider.MediaStore.Images.Media
+import android.provider.MediaStore.{Images, MediaColumns}
+import android.text.Editable
+import android.util.Log
+import android.view.View.OnClickListener
+
 import scala.language.postfixOps
 
-import android.os.Bundle
-import android.widget.{ListView, LinearLayout, TextView, Button}
+import android.os.{Environment, Bundle}
+import android.widget._
 import android.view.ViewGroup.LayoutParams._
 import android.view.{Gravity, View}
 import android.app.Activity
-import android.graphics.Color
+import android.graphics.{Bitmap, BitmapFactory, Color}
 
 // import macroid stuff
 import macroid._
@@ -17,76 +29,157 @@ import macroid.viewable._
 
 import scala.concurrent.ExecutionContext.Implicits.global
 
-// a simple case class to demonstrate listing things
-case class ColorString(text: String, color: Int)
+import scala.collection.JavaConversions._
+import Utils._
+import Steganography._
 
-// define our helpers in a mixable trait
-trait Styles {
-  // sets text, large font size and a long click handler
-  def caption(cap: String)(implicit appCtx: AppContext): Tweak[TextView] =
-    text(cap) + TextTweaks.large + On.longClick {
-      (toast("I’m a caption") <~ gravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL) <~ fry) ~
-      Ui(true)
-    }
+class MainActivity extends Activity with Contexts[Activity] {
+  implicit val ctx = this
 
-  // allows to display colored strings in a ListView
-  def colorStringListable(implicit ctx: ActivityContext, appCtx: AppContext): Listable[ColorString, TextView] =
-    Listable[ColorString].tw(
-      w[TextView] <~ TextTweaks.typeface("sans-serif-condensed") <~ TextTweaks.medium
-    ) { colorString ⇒
-      text(colorString.text) + TextTweaks.color(colorString.color)
-    }
-}
+  val TAG = "MainActivity"
 
-// mix in Contexts for Activity
-class MainActivity extends Activity with Styles with Contexts[Activity] {
-  // prepare a variable to hold our text view
-  var cap = slot[TextView]
+  val PICK_PHOTO_GALLERY = 123
+  val PICK_PHOTO_CAMERA = 234
 
-  // some colored strings
-  val colorStrings = List(
-    ColorString("Coquelicot", Color.parseColor("#EC4908")),
-    ColorString("Smaragdine", Color.parseColor("#009874")),
-    ColorString("Glaucous",   Color.parseColor("#6082B6"))
-  )
+  lazy val etEncryptText = findViewById(R.id.etEncryptText).asInstanceOf[EditText]
+  lazy val etDecryptText = findViewById(R.id.etDecryptedText).asInstanceOf[EditText]
+
+  lazy val btnEncrypt = findViewById(R.id.btnEncrypt).asInstanceOf[Button]
+  lazy val btnDecrypt = findViewById(R.id.btnDecrypt).asInstanceOf[Button]
+
+  lazy val imageView = findViewById(R.id.imageView).asInstanceOf[ImageView]
+  lazy val imageViewOut = findViewById(R.id.imageViewOut).asInstanceOf[ImageView]
+
+  lazy val btnSave = findViewById(R.id.btnSave).asInstanceOf[Button]
+
+  var maybeBitmap: Option[Bitmap] = _
+  var dest: File = _
 
   override def onCreate(savedInstanceState: Bundle) = {
     super.onCreate(savedInstanceState)
-    // this will be a linear layout
-    val view = l[LinearLayout](
-      // a text view
-      w[TextView] <~
-        // use our helper
-        caption("Howdy?") <~
-        // assign to cap
-        wire(cap),
+    setContentView(R.layout.activity_main)
 
-      // a button
-      w[Button] <~
-        // set text
-        text("Click me!") <~
-        // set layout params (LinearLayout.LayoutParams will be used)
-        layoutParams[LinearLayout](MATCH_PARENT, WRAP_CONTENT) <~
-        // specify a background image
-        BgTweaks.res(R.drawable.btn_green_matte) <~
-        // set click handler
-        On.click {
-          // with <~~ we can apply snails like `delay`
-          // tweaks coming after them will wait till they finish
-          cap <~ text("Button clicked!") <~~ delay(1000) <~ text("Howdy")
-        },
+    runUi(imageView <~ On.click(
+      dialog("Choose Image")
+        <~ positive("Camera")(Ui {
+        val intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        startActivityForResult(intent, PICK_PHOTO_CAMERA)
+      })
+        <~ negative("Gallery")(Ui {
+        val intent = new Intent(Intent.ACTION_GET_CONTENT)
+        intent.setType("image/*")
+        startActivityForResult(intent, PICK_PHOTO_GALLERY)
+      })
+        <~ speak)
+    )
 
-      // a list view
-      w[ListView] <~
-        // use a listable to display the colored strings
-        colorStringListable.listAdapterTweak(colorStrings)
-    ) <~
-      // match layout orientation to screen orientation
-      (portrait ? vertical | horizontal) <~ Transformer {
-        // here we set a padding of 4 dp for all inner views
-        case x: View ⇒ x <~ padding(all = 4 dp)
+    runUi(btnEncrypt <~ On.click(Ui {
+      if (etEncryptText.getText.toString.nonEmpty) {
+        maybeBitmap match {
+          case Some(bitmap) =>
+            val resBitmap: Bitmap = encrypt(bitmap, etEncryptText.getText)
+            maybeBitmap = Some(resBitmap)
+            imageViewOut.setImageBitmap(resBitmap)
+          case _ =>
+            runUi(
+              dialog("Please add image")
+                <~ negativeCancel(Ui {})
+                <~ speak
+            )
+        }
+      } else {
+        runUi(
+          dialog("Please add the text")
+            <~ negativeCancel(Ui {})
+            <~ speak
+        )
       }
+    }))
 
-    setContentView(getUi(view))
+    runUi(btnDecrypt <~ On.click(Ui {
+      maybeBitmap match {
+        case Some(bitmap) =>
+          etDecryptText.setText(decrypt(bitmap))
+        case _ =>
+          runUi(
+            dialog("Please add image")
+              <~ negativeCancel(Ui {})
+              <~ speak
+          )
+      }
+    }))
+
+    runUi(btnSave <~ On.click(Ui{
+      maybeBitmap match {
+        case Some(bitmap) =>
+          val destination = new File(Environment.getExternalStorageDirectory, System.currentTimeMillis() + ".png")
+          val fos = new FileOutputStream(destination)
+
+          bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
+          fos.flush()
+          fos.close()
+          MediaStore.Images.Media.insertImage(getContentResolver,
+            destination.getAbsolutePath, destination.getName, destination.getName)
+
+          val options = new BitmapFactory.Options()
+          options.inPreferredConfig = Bitmap.Config.ARGB_8888
+          Log.d(TAG, s"destination: ${destination.getAbsolutePath} : ${destination.getCanonicalPath}")
+          val btmD = BitmapFactory.decodeStream(new FileInputStream(destination), null, options)
+          etDecryptText.setText(decrypt(btmD))
+
+          dest = destination
+        case _ =>
+          runUi(
+            dialog("Please add image")
+              <~ negativeCancel(Ui {})
+              <~ speak
+          )
+      }
+    }))
+  }
+
+  override def onActivityResult(requestCode: Int, resultCode: Int, data: Intent): Unit = {
+
+    super.onActivityResult(requestCode, resultCode, data)
+
+    if (resultCode == Activity.RESULT_OK) {
+      if (data == null) {
+        Log.d(TAG, "Error")
+        return
+      }
+      requestCode match {
+        case PICK_PHOTO_GALLERY =>
+          maybeBitmap match {
+            case Some(bitmap) =>
+              val options = new BitmapFactory.Options()
+              options.inPreferredConfig = Bitmap.Config.ARGB_8888
+              Log.d(TAG, s"destination: ${dest.getAbsolutePath} : ${dest.getCanonicalPath}")
+              val btmD = BitmapFactory.decodeStream(new FileInputStream(dest), null, options)
+              maybeBitmap = Some(btmD)
+            case _ =>
+              val selectedImage = data.getData
+              val filePathColumn: Array[String] = Array(MediaColumns.DATA)
+
+              val cursor = getContentResolver.query(selectedImage, filePathColumn, null, null, null)
+              cursor.moveToFirst
+
+              val columnIndex: Int = cursor.getColumnIndex(filePathColumn(0))
+              val picturePath: String = cursor.getString(columnIndex)
+              cursor.close
+
+              val options = new BitmapFactory.Options()
+              options.inPreferredConfig = Bitmap.Config.ARGB_8888
+              maybeBitmap = Some(BitmapFactory.decodeFile(picturePath, options))
+              Log.d(TAG, s"destination: ${picturePath} : ${picturePath}")
+
+          }
+
+          imageView.setImageBitmap(maybeBitmap.get)
+        case PICK_PHOTO_CAMERA =>
+          maybeBitmap = Some(data.getExtras.get("data").asInstanceOf[Bitmap])
+          imageView.setImageBitmap(maybeBitmap.get)
+      }
+    }
+
   }
 }
