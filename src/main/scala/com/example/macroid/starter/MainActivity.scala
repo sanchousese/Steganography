@@ -6,8 +6,6 @@ import java.nio.ByteBuffer
 import android.content.{ContentValues, Intent}
 import android.net.Uri
 import android.provider.MediaStore
-import android.provider.MediaStore.Images.Media
-import android.provider.MediaStore.{Images, MediaColumns}
 import android.text.Editable
 import android.util.Log
 import android.view.View.OnClickListener
@@ -53,7 +51,6 @@ class MainActivity extends Activity with Contexts[Activity] {
   lazy val btnSave = findViewById(R.id.btnSave).asInstanceOf[Button]
 
   var maybeBitmap: Option[Bitmap] = _
-  var dest: File = _
 
   override def onCreate(savedInstanceState: Bundle) = {
     super.onCreate(savedInstanceState)
@@ -109,25 +106,25 @@ class MainActivity extends Activity with Contexts[Activity] {
       }
     }))
 
-    runUi(btnSave <~ On.click(Ui{
+    runUi(btnSave <~ On.click(Ui {
       maybeBitmap match {
         case Some(bitmap) =>
-          val destination = new File(Environment.getExternalStorageDirectory, System.currentTimeMillis() + ".png")
+          val dir = new File(Environment.getExternalStorageDirectory + "/Steganography")
+          dir.mkdirs()
+          val destination = new File(Environment.getExternalStorageDirectory + "/Steganography",
+            System.currentTimeMillis() + ".png")
+
           val fos = new FileOutputStream(destination)
 
           bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
           fos.flush()
           fos.close()
-          MediaStore.Images.Media.insertImage(getContentResolver,
-            destination.getAbsolutePath, destination.getName, destination.getName)
 
-          val options = new BitmapFactory.Options()
-          options.inPreferredConfig = Bitmap.Config.ARGB_8888
-          Log.d(TAG, s"destination: ${destination.getAbsolutePath} : ${destination.getCanonicalPath}")
-          val btmD = BitmapFactory.decodeStream(new FileInputStream(destination), null, options)
-          etDecryptText.setText(decrypt(btmD))
-
-          dest = destination
+          runUi(
+            dialog(s"Image saved on path: ${destination.getPath}")
+              <~ negativeCancel(Ui {})
+              <~ speak
+          )
         case _ =>
           runUi(
             dialog("Please add image")
@@ -142,36 +139,20 @@ class MainActivity extends Activity with Contexts[Activity] {
 
     super.onActivityResult(requestCode, resultCode, data)
 
-    if (resultCode == Activity.RESULT_OK) {
+    if (resultCode == Activity.RESULT_OK && data != null) {
       if (data == null) {
         Log.d(TAG, "Error")
         return
       }
       requestCode match {
         case PICK_PHOTO_GALLERY =>
-          maybeBitmap match {
-            case Some(bitmap) =>
-              val options = new BitmapFactory.Options()
-              options.inPreferredConfig = Bitmap.Config.ARGB_8888
-              Log.d(TAG, s"destination: ${dest.getAbsolutePath} : ${dest.getCanonicalPath}")
-              val btmD = BitmapFactory.decodeStream(new FileInputStream(dest), null, options)
-              maybeBitmap = Some(btmD)
-            case _ =>
-              val selectedImage = data.getData
-              val filePathColumn: Array[String] = Array(MediaColumns.DATA)
-
-              val cursor = getContentResolver.query(selectedImage, filePathColumn, null, null, null)
-              cursor.moveToFirst
-
-              val columnIndex: Int = cursor.getColumnIndex(filePathColumn(0))
-              val picturePath: String = cursor.getString(columnIndex)
-              cursor.close
-
-              val options = new BitmapFactory.Options()
-              options.inPreferredConfig = Bitmap.Config.ARGB_8888
-              maybeBitmap = Some(BitmapFactory.decodeFile(picturePath, options))
-              Log.d(TAG, s"destination: ${picturePath} : ${picturePath}")
-
+          val selectedImageUri = data.getData
+          if (selectedImageUri.getPath.contains("Steganography")) {
+            val options = new BitmapFactory.Options()
+            options.inPreferredConfig = Bitmap.Config.ARGB_8888
+            maybeBitmap = Some(BitmapFactory.decodeFile(selectedImageUri.getPath, options))
+          } else {
+            maybeBitmap = Some(MediaStore.Images.Media.getBitmap(getContentResolver, selectedImageUri))
           }
 
           imageView.setImageBitmap(maybeBitmap.get)
