@@ -12,7 +12,7 @@ import android.view.View.OnClickListener
 
 import scala.language.postfixOps
 
-import android.os.{Environment, Bundle}
+import android.os.{Build, Environment, Bundle}
 import android.widget._
 import android.view.ViewGroup.LayoutParams._
 import android.view.{Gravity, View}
@@ -120,6 +120,15 @@ class MainActivity extends Activity with Contexts[Activity] {
           fos.flush()
           fos.close()
 
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            val mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
+            mediaScanIntent.setData(Uri.fromFile(destination))
+            sendBroadcast(mediaScanIntent)
+          } else {
+            sendBroadcast(new Intent(Intent.ACTION_MEDIA_MOUNTED, Uri.parse("file://"+ Environment.getExternalStorageDirectory)))
+          }
+
+
           runUi(
             dialog(s"Image saved on path: ${destination.getPath}")
               <~ negativeCancel(Ui {})
@@ -147,6 +156,7 @@ class MainActivity extends Activity with Contexts[Activity] {
       requestCode match {
         case PICK_PHOTO_GALLERY =>
           val selectedImageUri = data.getData
+          runUi(toast(s"url: ${selectedImageUri.getPath}, ${selectedImageUri.getEncodedPath}") <~ long <~ fry)
           if (selectedImageUri.getPath.contains("Steganography")) {
             val options = new BitmapFactory.Options()
             options.inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -155,7 +165,13 @@ class MainActivity extends Activity with Contexts[Activity] {
             maybeBitmap = Some(MediaStore.Images.Media.getBitmap(getContentResolver, selectedImageUri))
           }
 
-          imageView.setImageBitmap(maybeBitmap.get)
+          maybeBitmap match {
+            case Some(bitmap) =>
+              imageView.setImageBitmap(bitmap)
+            case _ =>
+
+              runUi(toast(s"error: ${selectedImageUri.getPath}, ${selectedImageUri.getEncodedPath}") <~ fry)
+          }
         case PICK_PHOTO_CAMERA =>
           maybeBitmap = Some(data.getExtras.get("data").asInstanceOf[Bitmap])
           imageView.setImageBitmap(maybeBitmap.get)
